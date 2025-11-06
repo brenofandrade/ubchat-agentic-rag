@@ -62,6 +62,7 @@ logger.info(f"  - Namespace: {DEFAULT_NAMESPACE}")
 @app.route("/health", methods=["GET"])
 def health():
     """Health check endpoint."""
+    print("[ROTA] GET /health - Health check acionado")
     return jsonify({
         "status": "ok",
         "provider": query_router.provider,
@@ -91,6 +92,7 @@ def route_query():
         "suggested_documents": ["doc1", "doc2"] (if route=rag)
     }
     """
+    print("[ROTA] POST /route-query - Roteamento de query acionado")
     try:
         data = request.get_json()
 
@@ -100,10 +102,12 @@ def route_query():
             }), 400
 
         question = data["question"]
+        print(f"  └─ Pergunta: {question}")
         context = data.get("context")
 
         # Route the query
         decision = query_router.route_query(question, context)
+        print(f"  └─ Decisão de roteamento: {decision.route.value} (confiança: {decision.confidence:.2f})")
 
         # Convert to JSON-serializable format
         response = {
@@ -141,6 +145,7 @@ def route_query_simple():
         "route": "rag" | "direct" | "clarify"
     }
     """
+    print("[ROTA] POST /route-query/simple - Roteamento simples acionado")
     try:
         data = request.get_json()
 
@@ -150,7 +155,9 @@ def route_query_simple():
             }), 400
 
         question = data["question"]
+        print(f"  └─ Pergunta: {question}")
         route = query_router.route_query_simple(question)
+        print(f"  └─ Rota decidida: {route}")
 
         return jsonify({"route": route}), 200
 
@@ -196,6 +203,7 @@ def rag_query():
         }
     }
     """
+    print("[ROTA] POST /rag/query - Query RAG completa acionada")
     try:
         data = request.get_json()
 
@@ -205,6 +213,7 @@ def rag_query():
             }), 400
 
         question = data["question"]
+        print(f"  └─ Pergunta: {question}")
         chat_history = data.get("chat_history", [])
         top_k = data.get("top_k")
         namespace = data.get("namespace", DEFAULT_NAMESPACE)
@@ -256,6 +265,7 @@ def rag_retrieve():
         "count": 5
     }
     """
+    print("[ROTA] POST /rag/retrieve - Recuperação de documentos acionada")
     try:
         data = request.get_json()
 
@@ -265,6 +275,7 @@ def rag_retrieve():
             }), 400
 
         question = data["question"]
+        print(f"  └─ Pergunta: {question}")
         top_k = data.get("top_k")
         namespace = data.get("namespace", DEFAULT_NAMESPACE)
 
@@ -321,6 +332,7 @@ def chat():
         "clarifying_questions": [...] (if route=clarify)
     }
     """
+    print("[ROTA] POST /chat - Chat completo acionado")
     try:
         data = request.get_json()
 
@@ -330,11 +342,13 @@ def chat():
             }), 400
 
         question = data["question"]
+        print(f"  └─ Pergunta: {question}")
         chat_history = data.get("chat_history", [])
         context = data.get("context")
 
         # Route the query
         decision = query_router.route_query(question, context)
+        print(f"  └─ Decisão de roteamento: {decision.route.value} (confiança: {decision.confidence:.2f})")
 
         # Build response based on route
         response = {
