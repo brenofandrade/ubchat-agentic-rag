@@ -3,6 +3,7 @@ Motor RAG (Retrieval-Augmented Generation) usando Ollama e Pinecone.
 """
 
 import logging
+import re
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -50,6 +51,92 @@ class RetrievedDocument:
 
     def __repr__(self):
         return f"RetrievedDocument(score={self.score:.3f}, content='{self.content[:50]}...')"
+
+
+def extract_document_identifiers(query: str) -> List[str]:
+    """
+    Extrai identificadores de documentos da query.
+
+    Detecta padrões como:
+    - MAN-XXX (Manuais)
+    - NR-XXX (Normas Regulamentadoras)
+    - PROC-XXX (Procedimentos)
+    - DOC-XXX (Documentos gerais)
+    - ISO-XXX (Normas ISO)
+    - E outros padrões alfanuméricos similares
+
+    Args:
+        query: Consulta do usuário
+
+    Returns:
+        Lista de identificadores encontrados
+    """
+    # Padrões comuns de identificadores de documentos
+    patterns = [
+        r'\b([A-Z]{2,6}-\d{2,6})\b',  # Padrão geral: XXX-NNN ou XXXXXX-NNNNNN
+        r'\b([A-Z]{2,6}\s*\d{2,6})\b',  # Padrão com espaço: XXX NNN
+        r'\b(NR\s*-?\s*\d{1,3})\b',  # Normas Regulamentadoras específicas
+    ]
+
+    identifiers = []
+    for pattern in patterns:
+        matches = re.finditer(pattern, query, re.IGNORECASE)
+        for match in matches:
+            identifier = match.group(1).strip()
+            # Normaliza o identificador (remove espaços extras, normaliza hífens)
+            identifier = re.sub(r'\s+', '', identifier)  # Remove espaços
+            identifier = re.sub(r'([A-Z]+)(\d+)', r'\1-\2', identifier, flags=re.IGNORECASE)  # Adiciona hífen se não tiver
+            identifier = identifier.upper()
+            if identifier not in identifiers:
+                identifiers.append(identifier)
+
+    return identifiers
+
+
+def build_metadata_filters(identifiers: List[str]) -> Optional[Dict[str, Any]]:
+    """
+    Constrói filtros de metadados do Pinecone baseado em identificadores.
+
+    Args:
+        identifiers: Lista de identificadores de documentos
+
+    Returns:
+        Dicionário de filtros do Pinecone ou None se vazio
+    """
+    if not identifiers:
+        return None
+
+    # Pinecone usa sintaxe MongoDB para filtros
+    # Vamos procurar em vários campos de metadados possíveis
+    if len(identifiers) == 1:
+        # Para um único identificador, busca exata ou parcial
+        identifier = identifiers[0]
+        return {
+            "$or": [
+                {"document_id": {"$eq": identifier}},
+                {"doc_id": {"$eq": identifier}},
+                {"id": {"$eq": identifier}},
+                {"source": {"$eq": identifier}},
+                {"title": {"$eq": identifier}},
+                {"name": {"$eq": identifier}},
+                # Busca parcial usando regex (se suportado pelo índice)
+                {"document_id": {"$in": [identifier]}},
+                {"source": {"$in": [identifier]}},
+            ]
+        }
+    else:
+        # Para múltiplos identificadores, busca por qualquer um deles
+        or_conditions = []
+        for identifier in identifiers:
+            or_conditions.extend([
+                {"document_id": {"$eq": identifier}},
+                {"doc_id": {"$eq": identifier}},
+                {"id": {"$eq": identifier}},
+                {"source": {"$eq": identifier}},
+                {"title": {"$eq": identifier}},
+                {"name": {"$eq": identifier}},
+            ])
+        return {"$or": or_conditions}
 
 
 class RAGEngine:
@@ -163,31 +250,54 @@ class RAGEngine:
 
         logger.info("✓ RAG Engine inicializado com sucesso")
 
-    def retrieve(self, query: str, top_k: Optional[int] = None) -> List[RetrievedDocument]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        metadata_filters: Optional[Dict[str, Any]] = None,
+        auto_detect_identifiers: bool = True
+    ) -> List[RetrievedDocument]:
         """
         Recupera documentos relevantes do vector store.
 
         Args:
             query: Consulta do usuário
             top_k: Número de documentos a recuperar (sobrescreve padrão)
+            metadata_filters: Filtros de metadados para o Pinecone (opcional)
+            auto_detect_identifiers: Se True, detecta automaticamente identificadores
+                                      de documentos na query (ex: MAN-297, NR-013)
 
         Returns:
             Lista de documentos recuperados
         """
         k = top_k if top_k is not None else self.top_k
 
-        logger.info(f"Recuperando {k} documentos para query: '{query[:100]}...'")
+        # Detecta identificadores de documentos automaticamente se habilitado
+        if auto_detect_identifiers and metadata_filters is None:
+            identifiers = extract_document_identifiers(query)
+            if identifiers:
+                metadata_filters = build_metadata_filters(identifiers)
+                logger.info(
+                    f"🔍 Identificadores detectados: {identifiers} - aplicando busca por metadados"
+                )
+
+        if metadata_filters:
+            logger.info(
+                f"Recuperando {k} documentos com filtros de metadados para query: '{query[:100]}...'"
+            )
+        else:
+            logger.info(f"Recuperando {k} documentos para query: '{query[:100]}...'")
 
         try:
             if self.use_hybrid and self.sparse_encoder:
-                documents = self._hybrid_retrieve(query, k)
+                documents = self._hybrid_retrieve(query, k, metadata_filters)
                 if not documents:
                     logger.warning(
                         "Busca híbrida não retornou resultados; usando busca densa como fallback."
                     )
-                    documents = self._dense_retrieve(query, k)
+                    documents = self._dense_retrieve(query, k, metadata_filters)
             else:
-                documents = self._dense_retrieve(query, k)
+                documents = self._dense_retrieve(query, k, metadata_filters)
 
             # Aplica reranking se configurado
             if self.rerank_method != "none" and len(documents) > 0:
@@ -199,12 +309,35 @@ class RAGEngine:
             logger.error(f"Erro ao recuperar documentos: {e}")
             return []
 
-    def _dense_retrieve(self, query: str, k: int) -> List[RetrievedDocument]:
-        """Executa recuperação baseada apenas em embeddings densos."""
+    def _dense_retrieve(
+        self,
+        query: str,
+        k: int,
+        metadata_filters: Optional[Dict[str, Any]] = None
+    ) -> List[RetrievedDocument]:
+        """
+        Executa recuperação baseada apenas em embeddings densos.
+
+        Args:
+            query: Consulta do usuário
+            k: Número de documentos a recuperar
+            metadata_filters: Filtros de metadados para o Pinecone
+
+        Returns:
+            Lista de documentos recuperados
+        """
+        search_kwargs = {
+            "k": k,
+            "namespace": self.namespace
+        }
+
+        # Adiciona filtros de metadados se fornecidos
+        if metadata_filters:
+            search_kwargs["filter"] = metadata_filters
+
         results = self.vectorstore.similarity_search_with_score(
             query=query,
-            k=k,
-            namespace=self.namespace
+            **search_kwargs
         )
 
         documents = [
@@ -216,11 +349,27 @@ class RAGEngine:
             for doc, score in results
         ]
 
-        logger.info(f"✓ Recuperados {len(documents)} documentos (busca densa)")
+        filter_info = " (com filtros de metadados)" if metadata_filters else ""
+        logger.info(f"✓ Recuperados {len(documents)} documentos (busca densa{filter_info})")
         return documents
 
-    def _hybrid_retrieve(self, query: str, k: int) -> List[RetrievedDocument]:
-        """Executa recuperação híbrida combinando sinais densos e esparsos."""
+    def _hybrid_retrieve(
+        self,
+        query: str,
+        k: int,
+        metadata_filters: Optional[Dict[str, Any]] = None
+    ) -> List[RetrievedDocument]:
+        """
+        Executa recuperação híbrida combinando sinais densos e esparsos.
+
+        Args:
+            query: Consulta do usuário
+            k: Número de documentos a recuperar
+            metadata_filters: Filtros de metadados para o Pinecone
+
+        Returns:
+            Lista de documentos recuperados
+        """
         try:
             dense_vector = self.embeddings.embed_query(query)
         except Exception as exc:
@@ -244,14 +393,21 @@ class RAGEngine:
                 logger.error(f"Erro ao aplicar escala híbrida: {exc}")
                 return []
 
+        # Prepara parâmetros da query
+        query_params = {
+            "vector": dense_vector,
+            "sparse_vector": sparse_vector,
+            "namespace": self.namespace,
+            "top_k": k,
+            "include_metadata": True
+        }
+
+        # Adiciona filtros de metadados se fornecidos
+        if metadata_filters:
+            query_params["filter"] = metadata_filters
+
         try:
-            response = self.index.query(
-                vector=dense_vector,
-                sparse_vector=sparse_vector,
-                namespace=self.namespace,
-                top_k=k,
-                include_metadata=True
-            )
+            response = self.index.query(**query_params)
         except Exception as exc:
             logger.error(f"Erro ao consultar Pinecone (busca híbrida): {exc}")
             return []
@@ -294,7 +450,8 @@ class RAGEngine:
                 )
             )
 
-        logger.info(f"✓ Recuperados {len(documents)} documentos (busca híbrida)")
+        filter_info = " (com filtros de metadados)" if metadata_filters else ""
+        logger.info(f"✓ Recuperados {len(documents)} documentos (busca híbrida{filter_info})")
         return documents
 
     def _verify_pinecone_connection(self) -> None:
