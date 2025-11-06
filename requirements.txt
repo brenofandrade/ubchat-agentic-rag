@@ -1,8 +1,12 @@
-#
+# Web Framework
 flask
 flask-cors
 waitress
 requests
 
-#
+# Environment
 python-dotenv
+
+# LLM Providers (optional, install based on your choice)
+openai>=1.0.0
+anthropic>=0.21.0
