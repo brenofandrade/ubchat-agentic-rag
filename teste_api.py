@@ -374,6 +374,18 @@ if __name__ == "__main__":
         question="Qual é a capital do Brasil?"
     )
 
+    test_route_query_simple(
+        question="Como faz reembolso de gastos em viagens?"
+    )
+
+    test_route_query_simple(
+        question="Como abrir chamado para a TI no TASY?"
+    )
+
+    test_route_query_simple(
+        question="Como?"
+    )
+
     # 4. Teste de RAG Query
     test_rag_query(
         question="Quais são os cursos oferecidos pela UFU?",

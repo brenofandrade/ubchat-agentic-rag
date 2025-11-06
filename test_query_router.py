@@ -55,6 +55,11 @@ def main():
         "Preciso de ajuda",
         "O que fazer?",
         "Isso funciona?",
+
+        # Saudações
+        "Olá",
+        "Oi chat",
+        "Tudo bem?",
     ]
 
     print("\n" + "="*80)
