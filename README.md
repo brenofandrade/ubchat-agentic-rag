@@ -87,13 +87,25 @@ EMBEDDING_MODEL=mxbai-embed-large:latest
 
 ## 🚀 Executando o Sistema
 
-### Iniciar o servidor
+### Iniciar o backend
 
 ```bash
 python main.py
 ```
 
-O servidor estará disponível em `http://localhost:8000`
+O servidor backend estará disponível em `http://localhost:8000`
+
+### Iniciar a interface web (Streamlit)
+
+Em outro terminal, execute:
+
+```bash
+streamlit run ui_app.py
+```
+
+A interface web estará disponível em `http://localhost:8501`
+
+**Nota**: O backend deve estar rodando antes de iniciar a interface web.
 
 ### Health Check
 
@@ -211,11 +223,55 @@ curl -X POST http://localhost:8000/chat \
   }'
 ```
 
+## 💻 Interface Web (Streamlit)
+
+A aplicação inclui uma interface web moderna e intuitiva construída com Streamlit.
+
+### Funcionalidades da Interface
+
+- **Chat Interativo**: Interface de conversação natural
+- **Histórico de Mensagens**: Mantém contexto da conversa
+- **Exibição de Fontes**: Mostra documentos que foram usados para gerar a resposta
+- **Verificação de Servidor**: Botão para verificar status do backend
+- **Feedback**: Sistema de avaliação de respostas
+- **Nova Conversa**: Botão para reiniciar a sessão
+- **Autenticação** (opcional): Sistema de login para controlar acesso
+
+### Configuração da Interface
+
+As configurações da interface são feitas através de variáveis de ambiente no arquivo `.env`:
+
+```bash
+# Configurações da Interface Streamlit
+APP_VERSION=1.0.0                    # Versão da aplicação
+BACKEND_URL=http://localhost:8000    # URL do backend
+BACKEND_PORT=8000                    # Porta do backend
+API_URL=                             # URL da API de autenticação (opcional)
+AUTH_TOKEN=                          # Token de autenticação (opcional)
+POD_ID=                              # ID do POD para RunPod (opcional)
+```
+
+### Monitoramento
+
+A interface registra automaticamente:
+- **Histórico de perguntas**: `monitoramento/history.log`
+- **Erros**: `monitoramento/erros.log`
+- **Feedback dos usuários**: `monitoramento/feedback.log`
+
+Esses logs incluem:
+- Timestamp
+- Sessão ID
+- Pergunta e resposta
+- Latência
+- Modo de operação (RAG, direto, etc.)
+- Informações de uso
+
 ## 🏗️ Arquitetura
 
 ```
 ubchat-agentic-rag/
-├── main.py                    # API Flask
+├── main.py                    # API Flask (Backend)
+├── ui_app.py                  # Interface Streamlit (Frontend)
 ├── config.py                  # Configurações centralizadas
 ├── requirements.txt           # Dependências
 ├── .env.example              # Template de variáveis de ambiente
@@ -223,6 +279,10 @@ ubchat-agentic-rag/
 │   ├── __init__.py
 │   ├── query_router.py       # Roteamento de consultas
 │   └── rag_engine.py         # Motor RAG (Ollama + Pinecone)
+├── monitoramento/            # Logs e monitoramento (criado automaticamente)
+│   ├── history.log          # Histórico de interações
+│   ├── erros.log            # Log de erros
+│   └── feedback.log         # Feedback dos usuários
 └── README.md
 ```
 
