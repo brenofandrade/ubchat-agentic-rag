@@ -4,6 +4,9 @@ flask-cors
 waitress
 requests
 
+# Streamlit UI
+streamlit>=1.28.0
+
 # Environment
 python-dotenv
 
