@@ -3,10 +3,10 @@ from requests.exceptions import HTTPError, ConnectionError, Timeout, RequestExce
 from typing import Optional, Dict, Any
 
 
-def main() -> None:
+def health_check(timeout=30) -> None:
     url = "http://localhost:8000/health"
     try:
-        response = requests.get(url, timeout=5)
+        response = requests.get(url, timeout=timeout)
         # Raise for non-2xx/3xx responses
         response.raise_for_status()
     except ConnectionError:
@@ -36,7 +36,12 @@ def main() -> None:
             print(response.text)
 
 
-def send_question(question: str, context: Optional[str] = None, base_url: str = "http://localhost:8000") -> Dict[str, Any]:
+def send_question(
+        question: str, 
+        context: Optional[str] = None, 
+        base_url: str = "http://localhost:8000", 
+        timeout=1200
+        ) -> Dict[str, Any]:
     """Send a question to the API (main.py) and return the JSON response.
 
     If context is provided, calls the full router endpoint '/route-query'.
@@ -50,7 +55,7 @@ def send_question(question: str, context: Optional[str] = None, base_url: str = 
         payload["context"] = context
 
     try:
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = requests.post(url, json=payload, timeout=timeout)
         resp.raise_for_status()
         return resp.json()
     except ConnectionError:
@@ -69,10 +74,15 @@ def send_question(question: str, context: Optional[str] = None, base_url: str = 
 
 
 if __name__ == "__main__":
-    # main()
+    health_check()
 
-    question = input("Faça sua pergunta:\n")
+    # Teste rota 
 
-    resposta = send_question(question).get("answer", "__Texto sem resposta__")
 
-    print(resposta)
+
+
+
+
+    # question = input("Faça sua pergunta:\n")
+    # resposta = send_question(question).get("answer", "__Texto sem resposta__")
+    # print(resposta)

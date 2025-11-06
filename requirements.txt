@@ -15,7 +15,8 @@ anthropic>=0.21.0
 langchain>=0.1.0
 langchain-community>=0.0.13
 langchain-ollama>=0.1.0
-
+langchain-pinecone>=0.1.1
+langchain-core==1.0.3 
 # Vector Store - Pinecone
 pinecone-client>=3.0.0
 langchain-pinecone>=0.1.0
@@ -26,3 +27,4 @@ sentence-transformers>=2.2.0
 # Additional utilities
 numpy
 tiktoken
+ollama>=0.3
