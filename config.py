@@ -33,6 +33,11 @@ DEFAULT_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "default")
 # --- Retrieval Configuration ---
 RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", "2"))
 
+# --- Hybrid Retrieval Configuration ---
+ENABLE_HYBRID_SEARCH = os.getenv("ENABLE_HYBRID_SEARCH", "true").lower() in {"true", "1", "yes", "on"}
+HYBRID_ALPHA = float(os.getenv("HYBRID_ALPHA", "0.5"))
+SPLADE_MODEL = os.getenv("SPLADE_MODEL", "prithivida/Splade_PP_en_v1")
+
 # --- OpenAI (opcional, para fallback) ---
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -68,6 +73,7 @@ def validate_config():
     logger.info(f"  - Pinecone Index: {PINECONE_INDEX_NAME}")
     logger.info(f"  - Namespace: {DEFAULT_NAMESPACE}")
     logger.info(f"  - Retrieval K: {RETRIEVAL_K}")
+    logger.info(f"  - Hybrid Search: {'ativado' if ENABLE_HYBRID_SEARCH else 'desativado'} (alpha={HYBRID_ALPHA})")
     logger.info(f"  - Rerank Method: {RERANK_METHOD_DEFAULT}")
 
 # Executa validação ao importar
