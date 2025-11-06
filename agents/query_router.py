@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from typing import Optional, List
 import json
 import os
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class RouteType(str, Enum):
@@ -80,8 +84,7 @@ class QueryRouter:
                 self.client = ChatOllama(
                     model=self.model,
                     base_url=self.base_url,
-                    temperature=0.3,
-                    format="json"  # Força resposta JSON
+                    temperature=0.1  # Baixa temperatura para respostas mais determinísticas
                 )
             except ImportError:
                 self.client = None
@@ -99,105 +102,180 @@ class QueryRouter:
         Returns:
             RouteDecision with the routing choice and reasoning
         """
-        if not self.client:
-            # Fallback to rule-based routing if no LLM client available
-            return self._rule_based_routing(question, context)
+        logger.info(f"Roteando pergunta: '{question[:100]}...'")
 
-        # Use LLM for intelligent routing
-        return self._llm_based_routing(question, context)
+        if not self.client:
+            logger.warning("Cliente LLM não disponível, usando roteamento baseado em regras")
+            # Fallback to rule-based routing if no LLM client available
+            decision = self._rule_based_routing(question, context)
+        else:
+            # Use LLM for intelligent routing
+            decision = self._llm_based_routing(question, context)
+
+        logger.info(f"Decisão de roteamento: {decision.route.value} (confiança: {decision.confidence})")
+        logger.debug(f"Raciocínio: {decision.reasoning}")
+
+        return decision
 
     def _rule_based_routing(self, question: str, context: Optional[str] = None) -> RouteDecision:
         """
         Simple rule-based routing when LLM is not available.
 
-        This is a fallback mechanism with basic heuristics.
+        This is a fallback mechanism with improved heuristics.
         """
-        question_lower = question.lower()
+        logger.info("Usando roteamento baseado em regras (fallback)")
+        question_lower = question.lower().strip()
 
-        # Keywords that suggest internal document lookup
-        rag_keywords = [
-            "documento", "document", "arquivo", "file", "política", "policy",
-            "procedimento", "procedure", "manual", "guia", "guide",
-            "nossa empresa", "our company", "nosso", "our", "interno", "internal"
+        # Keywords que indicam fortemente busca em documentos internos (RAG)
+        strong_rag_keywords = [
+            "política", "policy", "políticas",
+            "procedimento", "procedure", "procedimentos",
+            "benefício", "benefit", "benefícios",
+            "reembolso", "reimbursement",
+            "férias", "vacation", "vacations",
+            "home office", "trabalho remoto", "remote work",
+            "rh", "hr", "recursos humanos", "human resources",
+            "empresa", "company", "organização", "organization",
+            "interno", "internal", "interna",
+            "como solicito", "como solicitar", "how do i request",
+            "qual o processo", "what is the process",
+            "manual", "guide", "guia",
+            "nossa", "nosso", "nossa empresa", "our company"
         ]
 
-        # Keywords that suggest clarification needed
-        clarify_keywords = [
-            "?", "qual", "what", "como", "how", "quando", "when",
-            "onde", "where", "quem", "who", "por que", "why"
+        # Keywords que indicam conhecimento geral (DIRECT)
+        direct_keywords = [
+            "o que é", "what is", "o que são", "what are",
+            "como funciona", "how does", "how works",
+            "defina", "define", "definição", "definition",
+            "explique", "explain", "explicação", "explanation",
+            "capital de", "capital of",
+            "história", "history", "histórico",
+            "ciência", "science", "científico",
+            "matemática", "math", "mathematical",
+            "física", "physics", "química", "chemistry",
+            "biologia", "biology", "fotossíntese", "photosynthesis"
         ]
 
-        # Very short or vague questions
-        if len(question.strip()) < 10:
+        # Perguntas extremamente vagas que requerem clarificação
+        vague_patterns = [
+            "como faço", "como fazer",
+            "me ajuda", "help me", "ajuda",
+            "preciso disso", "need this",
+            "aquilo", "that thing", "isso aí",
+            "aquele negócio"
+        ]
+
+        # 1. Perguntas muito curtas e vagas
+        if len(question.strip()) < 8:
+            if question_lower in ["oi", "olá", "hi", "hello", "help", "ajuda"]:
+                return RouteDecision(
+                    route=RouteType.CLARIFY,
+                    confidence=0.9,
+                    reasoning="Saudação ou pedido genérico de ajuda",
+                    clarifying_questions=[
+                        "Olá! Como posso ajudar você hoje?",
+                        "Você tem alguma dúvida específica sobre a empresa ou algum tópico geral?"
+                    ]
+                )
+
+        # 2. Check for vague patterns
+        if any(vague in question_lower for vague in vague_patterns) and len(question.strip()) < 30:
             return RouteDecision(
                 route=RouteType.CLARIFY,
-                confidence=0.8,
-                reasoning="Pergunta muito curta, precisa de mais detalhes",
+                confidence=0.85,
+                reasoning="Pergunta muito vaga sem contexto suficiente",
                 clarifying_questions=[
-                    "Você pode fornecer mais detalhes sobre o que precisa?",
-                    "Em que contexto você tem essa dúvida?"
+                    "Pode ser mais específico sobre o que você precisa?",
+                    "Você está perguntando sobre políticas da empresa ou sobre um tópico geral?"
                 ]
             )
 
-        # Check for RAG keywords
-        if any(keyword in question_lower for keyword in rag_keywords):
+        # 3. Strong RAG indicators
+        if any(keyword in question_lower for keyword in strong_rag_keywords):
             return RouteDecision(
                 route=RouteType.RAG,
-                confidence=0.7,
-                reasoning="Pergunta parece relacionada a documentos internos",
-                suggested_documents=["company_policies", "procedures", "manuals"]
+                confidence=0.85,
+                reasoning="Pergunta sobre políticas/procedimentos da organização",
+                suggested_documents=["company_policies", "procedures", "hr_manual"]
             )
 
-        # Check if question has multiple question marks or is very open-ended
-        if question.count("?") > 1 or any(q in question_lower for q in ["não sei", "don't know", "talvez", "maybe"]):
+        # 4. Direct knowledge indicators
+        if any(keyword in question_lower for keyword in direct_keywords):
             return RouteDecision(
-                route=RouteType.CLARIFY,
-                confidence=0.6,
-                reasoning="Pergunta parece incerta ou tem múltiplas partes",
-                clarifying_questions=[
-                    "Vamos focar em um aspecto específico. Qual é sua principal dúvida?"
-                ]
+                route=RouteType.DIRECT,
+                confidence=0.80,
+                reasoning="Pergunta sobre conhecimento geral/conceitos"
             )
 
-        # Default to direct answer for general knowledge questions
+        # 5. Check for organizational context even without exact keywords
+        org_context_words = ["empresa", "company", "trabalho", "work", "equipe", "team", "gestor", "manager"]
+        if any(word in question_lower for word in org_context_words):
+            return RouteDecision(
+                route=RouteType.RAG,
+                confidence=0.70,
+                reasoning="Pergunta parece relacionada ao contexto organizacional",
+                suggested_documents=["company_info", "policies"]
+            )
+
+        # 6. Default to DIRECT for general questions
+        logger.info("Nenhuma regra específica aplicada, usando rota DIRECT como padrão")
         return RouteDecision(
             route=RouteType.DIRECT,
-            confidence=0.6,
-            reasoning="Pergunta parece ser de conhecimento geral"
+            confidence=0.60,
+            reasoning="Pergunta parece ser de conhecimento geral (fallback padrão)"
         )
 
     def _llm_based_routing(self, question: str, context: Optional[str] = None) -> RouteDecision:
         """
         Use an LLM to intelligently route the query.
         """
-        system_prompt = """Você é um agente de roteamento de consultas. Sua função é analisar uma pergunta e decidir a melhor estratégia para respondê-la:
+        system_prompt = """Você é um agente de roteamento de consultas. Analise a pergunta do usuário e decida a MELHOR estratégia:
 
-1. **RAG** (Retrieval-Augmented Generation): Use quando a pergunta:
-   - Requer informações específicas da organização/empresa
-   - Menciona documentos, políticas, procedimentos internos
-   - Pede dados específicos que provavelmente estão em documentos
-   - Exemplo: "Qual é a política de férias da empresa?"
+1. **RAG** - Use quando a pergunta precisa de DOCUMENTOS INTERNOS da organização:
+   ✓ Políticas da empresa (férias, benefícios, RH, etc.)
+   ✓ Procedimentos internos (reembolso, aprovações, processos)
+   ✓ Informações específicas da organização
+   ✓ Documentos, manuais, guias internos
+   ✓ Palavras-chave: "empresa", "nossa política", "como solicito", "procedimento", "interno"
 
-2. **DIRECT** (Resposta Direta): Use quando a pergunta:
-   - É sobre conhecimento geral que o modelo já possui
-   - Não requer informações específicas da organização
-   - Pode ser respondida com conhecimento de treinamento do modelo
-   - Exemplo: "Como funciona fotossíntese?"
+   Exemplos RAG:
+   - "Qual é a política de férias da empresa?"
+   - "Como solicito reembolso de despesas?"
+   - "Quais são os benefícios oferecidos?"
+   - "Qual o procedimento para home office?"
 
-3. **CLARIFY** (Clarificar): Use quando a pergunta:
-   - É vaga ou ambígua
-   - Falta contexto importante
-   - Tem múltiplas interpretações possíveis
-   - É muito curta ou genérica
-   - Exemplo: "Como faço isso?" (sem especificar o que)
+2. **DIRECT** - Use quando é CONHECIMENTO GERAL (não específico da organização):
+   ✓ Conceitos científicos, históricos, matemáticos
+   ✓ Definições gerais
+   ✓ Conhecimento público/mundial
+   ✓ Perguntas que qualquer pessoa poderia responder sem acessar documentos específicos
 
-Responda APENAS com um JSON no seguinte formato:
+   Exemplos DIRECT:
+   - "Como funciona fotossíntese?"
+   - "Qual a capital da França?"
+   - "O que é Python?"
+   - "Explique o que é machine learning"
+
+3. **CLARIFY** - Use APENAS quando a pergunta é IMPOSSÍVEL de entender:
+   ✓ Pergunta extremamente vaga (ex: "Como faço?", "Me ajuda")
+   ✓ Falta informação crítica para entender a intenção
+   ✓ Múltiplas interpretações completamente diferentes
+
+   Exemplos CLARIFY:
+   - "Como faço?" (o quê?)
+   - "Preciso disso" (disso o quê?)
+   - "Aquilo ali" (qual coisa?)
+
+IMPORTANTE: Prefira RAG ou DIRECT ao invés de CLARIFY. Use CLARIFY apenas em último caso.
+
+Responda APENAS com JSON válido:
 {
     "route": "rag" | "direct" | "clarify",
     "confidence": 0.0-1.0,
-    "reasoning": "Explicação da decisão",
-    "clarifying_questions": ["pergunta1", "pergunta2"] (apenas se route=clarify),
-    "suggested_documents": ["doc1", "doc2"] (apenas se route=rag)
+    "reasoning": "Breve explicação (1 frase)",
+    "clarifying_questions": ["pergunta1", "pergunta2"] (opcional, apenas se route=clarify),
+    "suggested_documents": ["tipo_doc1", "tipo_doc2"] (opcional, apenas se route=rag)
 }"""
 
         user_prompt = f"Pergunta do usuário: {question}"
@@ -239,7 +317,8 @@ Responda APENAS com um JSON no seguinte formato:
 
             elif self.provider == "ollama":
                 # Ollama via LangChain
-                full_prompt = f"{system_prompt}\n\n{user_prompt}"
+                full_prompt = f"{system_prompt}\n\n{user_prompt}\n\nResposta (JSON):"
+                logger.debug(f"Enviando prompt para Ollama: {full_prompt[:200]}...")
                 response = self.client.invoke(full_prompt)
 
                 # Extrai conteúdo da resposta
@@ -248,16 +327,33 @@ Responda APENAS com um JSON no seguinte formato:
                 else:
                     content = str(response)
 
-                # Parse JSON da resposta
-                json_start = content.find("{")
-                json_end = content.rfind("}") + 1
-                if json_start >= 0 and json_end > json_start:
-                    result = json.loads(content[json_start:json_end])
-                else:
-                    # Tenta parsear diretamente
-                    result = json.loads(content)
+                logger.debug(f"Resposta do Ollama: {content[:500]}...")
+
+                # Parse JSON da resposta com tratamento de erros melhorado
+                try:
+                    # Tenta encontrar JSON na resposta
+                    json_start = content.find("{")
+                    json_end = content.rfind("}") + 1
+
+                    if json_start >= 0 and json_end > json_start:
+                        json_str = content[json_start:json_end]
+                        logger.debug(f"JSON extraído: {json_str}")
+                        result = json.loads(json_str)
+                    else:
+                        # Se não encontrar JSON, tenta parsear diretamente
+                        result = json.loads(content)
+
+                    # Valida campos obrigatórios
+                    if "route" not in result or "confidence" not in result or "reasoning" not in result:
+                        raise ValueError(f"JSON inválido: faltam campos obrigatórios. Resposta: {content}")
+
+                except json.JSONDecodeError as je:
+                    logger.error(f"Erro ao parsear JSON do Ollama: {je}")
+                    logger.error(f"Conteúdo recebido: {content}")
+                    raise ValueError(f"Resposta do Ollama não é JSON válido: {content[:200]}")
 
             # Parse the result into a RouteDecision
+            logger.info(f"Roteamento LLM bem-sucedido: {result.get('route', 'unknown')}")
             return RouteDecision(
                 route=RouteType(result["route"]),
                 confidence=result["confidence"],
@@ -267,7 +363,8 @@ Responda APENAS com um JSON no seguinte formato:
             )
 
         except Exception as e:
-            print(f"Error during LLM routing: {e}")
+            logger.error(f"Erro durante roteamento LLM: {e}", exc_info=True)
+            logger.warning("Caindo para roteamento baseado em regras")
             # Fallback to rule-based routing
             return self._rule_based_routing(question, context)
 
