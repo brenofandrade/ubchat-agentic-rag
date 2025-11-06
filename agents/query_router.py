@@ -128,41 +128,41 @@ class QueryRouter:
 
         # Keywords que indicam fortemente busca em documentos internos (RAG)
         strong_rag_keywords = [
-            "política", "policy", "políticas",
-            "procedimento", "procedure", "procedimentos",
-            "benefício", "benefit", "benefícios",
-            "reembolso", "reimbursement",
-            "férias", "vacation", "vacations",
-            "home office", "trabalho remoto", "remote work",
-            "rh", "hr", "recursos humanos", "human resources",
-            "empresa", "company", "organização", "organization",
-            "interno", "internal", "interna",
-            "como solicito", "como solicitar", "how do i request",
-            "qual o processo", "what is the process",
-            "manual", "guide", "guia",
-            "nossa", "nosso", "nossa empresa", "our company"
+            "política", "políticas",
+            "procedimento", "procedimentos",
+            "benefício", "benefícios",
+            "reembolso", 
+            "férias",
+            "trabalho remoto",
+            "rh", "recursos humanos", 
+            "empresa", "organização",
+            "interno", "interna",
+            "como solicito", "como solicitar",
+            "qual o processo",
+            "manual", "guia",
+            "nossa", "nosso", "nossa empresa"
         ]
 
         # Keywords que indicam conhecimento geral (DIRECT)
         direct_keywords = [
-            "o que é", "what is", "o que são", "what are",
-            "como funciona", "how does", "how works",
-            "defina", "define", "definição", "definition",
-            "explique", "explain", "explicação", "explanation",
-            "capital de", "capital of",
-            "história", "history", "histórico",
-            "ciência", "science", "científico",
-            "matemática", "math", "mathematical",
-            "física", "physics", "química", "chemistry",
-            "biologia", "biology", "fotossíntese", "photosynthesis"
+            "o que é", "o que são",
+            "como funciona",
+            "defina", "definição",
+            "explique", "explicação",
+            "capital de",
+            "história", "histórico",
+            "ciência", "científico",
+            "matemática",
+            "física", "química",
+            "biologia", "fotossíntese"
         ]
 
         # Perguntas extremamente vagas que requerem clarificação
         vague_patterns = [
             "como faço", "como fazer",
-            "me ajuda", "help me", "ajuda",
-            "preciso disso", "need this",
-            "aquilo", "that thing", "isso aí",
+            "me ajuda", "ajuda",
+            "preciso disso", 
+            "aquilo", "isso aí",
             "aquele negócio"
         ]
 
@@ -209,7 +209,7 @@ class QueryRouter:
             )
 
         # 5. Check for organizational context even without exact keywords
-        org_context_words = ["empresa", "company", "trabalho", "work", "equipe", "team", "gestor", "manager"]
+        org_context_words = ["empresa", "trabalho", "equipe", "gestor"]
         if any(word in question_lower for word in org_context_words):
             return RouteDecision(
                 route=RouteType.RAG,
@@ -231,52 +231,52 @@ class QueryRouter:
         Use an LLM to intelligently route the query.
         """
         system_prompt = """Você é um agente de roteamento de consultas. Analise a pergunta do usuário e decida a MELHOR estratégia:
+        
+        1. **RAG** - Use quando a pergunta precisa de DOCUMENTOS INTERNOS da organização:
+        ✓ Políticas da empresa (férias, benefícios, RH, etc.)
+        ✓ Procedimentos internos (reembolso, aprovações, processos)
+        ✓ Informações específicas da organização
+        ✓ Documentos, manuais, guias internos
+        ✓ Palavras-chave: "empresa", "nossa política", "como solicito", "procedimento", "interno"
 
-1. **RAG** - Use quando a pergunta precisa de DOCUMENTOS INTERNOS da organização:
-   ✓ Políticas da empresa (férias, benefícios, RH, etc.)
-   ✓ Procedimentos internos (reembolso, aprovações, processos)
-   ✓ Informações específicas da organização
-   ✓ Documentos, manuais, guias internos
-   ✓ Palavras-chave: "empresa", "nossa política", "como solicito", "procedimento", "interno"
+        Exemplos RAG:
+        - "Qual é a política de férias da empresa?"
+        - "Como solicito reembolso de despesas?"
+        - "Quais são os benefícios oferecidos?"
+        - "Qual o procedimento para home office?"
 
-   Exemplos RAG:
-   - "Qual é a política de férias da empresa?"
-   - "Como solicito reembolso de despesas?"
-   - "Quais são os benefícios oferecidos?"
-   - "Qual o procedimento para home office?"
+        2. **DIRECT** - Use quando é CONHECIMENTO GERAL (não específico da organização):
+        ✓ Conceitos científicos, históricos, matemáticos
+        ✓ Definições gerais
+        ✓ Conhecimento público/mundial
+        ✓ Perguntas que qualquer pessoa poderia responder sem acessar documentos específicos
 
-2. **DIRECT** - Use quando é CONHECIMENTO GERAL (não específico da organização):
-   ✓ Conceitos científicos, históricos, matemáticos
-   ✓ Definições gerais
-   ✓ Conhecimento público/mundial
-   ✓ Perguntas que qualquer pessoa poderia responder sem acessar documentos específicos
+        Exemplos DIRECT:
+        - "Como funciona fotossíntese?"
+        - "Qual a capital da França?"
+        - "O que é Python?"
+        - "Explique o que é machine learning"
 
-   Exemplos DIRECT:
-   - "Como funciona fotossíntese?"
-   - "Qual a capital da França?"
-   - "O que é Python?"
-   - "Explique o que é machine learning"
+        3. **CLARIFY** - Use APENAS quando a pergunta é IMPOSSÍVEL de entender:
+        ✓ Pergunta extremamente vaga (ex: "Como faço?", "Me ajuda")
+        ✓ Falta informação crítica para entender a intenção
+        ✓ Múltiplas interpretações completamente diferentes
 
-3. **CLARIFY** - Use APENAS quando a pergunta é IMPOSSÍVEL de entender:
-   ✓ Pergunta extremamente vaga (ex: "Como faço?", "Me ajuda")
-   ✓ Falta informação crítica para entender a intenção
-   ✓ Múltiplas interpretações completamente diferentes
+        Exemplos CLARIFY:
+        - "Como faço?" (o quê?)
+        - "Preciso disso" (disso o quê?)
+        - "Aquilo ali" (qual coisa?)
 
-   Exemplos CLARIFY:
-   - "Como faço?" (o quê?)
-   - "Preciso disso" (disso o quê?)
-   - "Aquilo ali" (qual coisa?)
+        IMPORTANTE: Prefira RAG ou DIRECT ao invés de CLARIFY. Use CLARIFY apenas em último caso.
 
-IMPORTANTE: Prefira RAG ou DIRECT ao invés de CLARIFY. Use CLARIFY apenas em último caso.
-
-Responda APENAS com JSON válido:
-{
-    "route": "rag" | "direct" | "clarify",
-    "confidence": 0.0-1.0,
-    "reasoning": "Breve explicação (1 frase)",
-    "clarifying_questions": ["pergunta1", "pergunta2"] (opcional, apenas se route=clarify),
-    "suggested_documents": ["tipo_doc1", "tipo_doc2"] (opcional, apenas se route=rag)
-}"""
+        Responda APENAS com JSON válido:
+        {
+            "route": "rag" | "direct" | "clarify",
+            "confidence": 0.0-1.0,
+            "reasoning": "Breve explicação (1 frase)",
+            "clarifying_questions": ["pergunta1", "pergunta2"] (opcional, apenas se route=clarify),
+            "suggested_documents": ["tipo_doc1", "tipo_doc2"] (opcional, apenas se route=rag)
+        }"""
 
         user_prompt = f"Pergunta do usuário: {question}"
         if context:
