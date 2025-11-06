@@ -41,18 +41,25 @@ class QueryRouter:
     - Ask clarifying questions (CLARIFY)
     """
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4", provider: str = "openai"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4", provider: str = "openai", base_url: Optional[str] = None):
         """
         Initialize the query router.
 
         Args:
             api_key: API key for the LLM provider (uses env var if not provided)
-            model: Model to use (gpt-4, claude-3-opus-20240229, etc.)
-            provider: LLM provider ("openai" or "anthropic")
+            model: Model to use (gpt-4, claude-3-opus-20240229, llama3.2:latest, etc.)
+            provider: LLM provider ("openai", "anthropic", or "ollama")
+            base_url: Base URL for Ollama (defaults to http://localhost:11434)
         """
         self.model = model
         self.provider = provider
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY")
+        self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+        # API key only needed for OpenAI and Anthropic
+        if provider in ["openai", "anthropic"]:
+            self.api_key = api_key or os.getenv("OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY")
+        else:
+            self.api_key = None
 
         # Import the appropriate client
         if provider == "openai":
@@ -67,8 +74,19 @@ class QueryRouter:
                 self.client = Anthropic(api_key=self.api_key) if self.api_key else None
             except ImportError:
                 self.client = None
+        elif provider == "ollama":
+            try:
+                from langchain_ollama import ChatOllama
+                self.client = ChatOllama(
+                    model=self.model,
+                    base_url=self.base_url,
+                    temperature=0.3,
+                    format="json"  # Força resposta JSON
+                )
+            except ImportError:
+                self.client = None
         else:
-            raise ValueError(f"Unsupported provider: {provider}")
+            raise ValueError(f"Unsupported provider: {provider}. Use 'openai', 'anthropic', or 'ollama'.")
 
     def route_query(self, question: str, context: Optional[str] = None) -> RouteDecision:
         """
@@ -218,6 +236,26 @@ Responda APENAS com um JSON no seguinte formato:
                     result = json.loads(content[json_start:json_end])
                 else:
                     raise ValueError("No JSON found in response")
+
+            elif self.provider == "ollama":
+                # Ollama via LangChain
+                full_prompt = f"{system_prompt}\n\n{user_prompt}"
+                response = self.client.invoke(full_prompt)
+
+                # Extrai conteúdo da resposta
+                if hasattr(response, 'content'):
+                    content = response.content
+                else:
+                    content = str(response)
+
+                # Parse JSON da resposta
+                json_start = content.find("{")
+                json_end = content.rfind("}") + 1
+                if json_start >= 0 and json_end > json_start:
+                    result = json.loads(content[json_start:json_end])
+                else:
+                    # Tenta parsear diretamente
+                    result = json.loads(content)
 
             # Parse the result into a RouteDecision
             return RouteDecision(
