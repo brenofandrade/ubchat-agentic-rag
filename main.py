@@ -45,7 +45,7 @@ app.url_map.strict_slashes = False
 logger.info("Inicializando Query Router e RAG Engine...")
 
 query_router = QueryRouter(
-    model=os.getenv("LLM_MODEL", GENERATION_MODEL),
+    model=os.getenv("GENERATION_MODEL", GENERATION_MODEL),
     provider=os.getenv("LLM_PROVIDER", "ollama"),
     base_url=OLLAMA_BASE_URL
 )

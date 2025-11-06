@@ -45,7 +45,7 @@ class QueryRouter:
     - Ask clarifying questions (CLARIFY)
     """
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4", provider: str = "openai", base_url: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-4o-mini", provider: str = "openai", base_url: Optional[str] = None):
         """
         Initialize the query router.
 
@@ -84,7 +84,7 @@ class QueryRouter:
                 self.client = ChatOllama(
                     model=self.model,
                     base_url=self.base_url,
-                    temperature=0.1  # Baixa temperatura para respostas mais determinísticas
+                    temperature=0  # Baixa temperatura para respostas mais determinísticas
                 )
             except ImportError:
                 self.client = None
@@ -241,6 +241,7 @@ class QueryRouter:
 
         Exemplos RAG:
         - "Qual é a política de férias da empresa?"
+        - "Posso vender integral ou parcialmente minhas férias?"
         - "Como solicito reembolso de despesas?"
         - "Quais são os benefícios oferecidos?"
         - "Qual o procedimento para home office?"
@@ -276,7 +277,8 @@ class QueryRouter:
             "reasoning": "Breve explicação (1 frase)",
             "clarifying_questions": ["pergunta1", "pergunta2"] (opcional, apenas se route=clarify),
             "suggested_documents": ["tipo_doc1", "tipo_doc2"] (opcional, apenas se route=rag)
-        }"""
+        }
+        """
 
         user_prompt = f"Pergunta do usuário: {question}"
         if context:
@@ -290,7 +292,7 @@ class QueryRouter:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    temperature=0.3,
+                    temperature=0,
                     response_format={"type": "json_object"}
                 )
                 result = json.loads(response.choices[0].message.content)
@@ -299,7 +301,7 @@ class QueryRouter:
                 response = self.client.messages.create(
                     model=self.model,
                     max_tokens=1024,
-                    temperature=0.3,
+                    temperature=0,
                     system=system_prompt,
                     messages=[
                         {"role": "user", "content": user_prompt}
