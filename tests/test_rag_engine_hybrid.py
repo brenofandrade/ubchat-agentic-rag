@@ -137,3 +137,93 @@ def test_dense_retrieve_used_when_hybrid_disabled(monkeypatch, rag_engine_module
 
     assert len(documents) == 1
     assert documents[0].content == "Documento denso"
+
+
+def test_retrieve_with_variations_when_no_results(monkeypatch, rag_engine_module):
+    """Testa que quando não encontra documentos, tenta buscar com variações"""
+    dummy_index, vectorstore = _setup_common_stubs(monkeypatch, rag_engine_module)
+
+    # Simula nenhum resultado na busca inicial
+    call_count = {"count": 0}
+
+    def mock_similarity_search(**kwargs):
+        call_count["count"] += 1
+        # Primeira chamada retorna vazio, segunda retorna documento
+        if call_count["count"] == 1:
+            return []
+        return [
+            (
+                SimpleNamespace(
+                    page_content="Documento encontrado com variação",
+                    metadata={"source": "test"}
+                ),
+                0.75
+            )
+        ]
+
+    vectorstore.similarity_search_with_score = mock_similarity_search
+
+    # Mock para geração de variações
+    class DummyChat:
+        def invoke(self, prompt):
+            return SimpleNamespace(
+                content="termo alternativo\noutra busca\nvariação da consulta"
+            )
+
+    monkeypatch.setattr(rag_engine_module, "ChatOllama", DummyChat)
+
+    engine = rag_engine_module.RAGEngine()
+    engine.llm = DummyChat()
+
+    # Desabilita hybrid para simplificar o teste
+    engine.use_hybrid = False
+    engine.sparse_encoder = None
+
+    documents = engine.retrieve("busca sem resultados", top_k=3, enable_fallback=True)
+
+    # Deve ter encontrado documentos com as variações
+    assert len(documents) > 0
+    assert documents[0].content == "Documento encontrado com variação"
+    assert call_count["count"] > 1, "Deve ter tentado múltiplas buscas"
+
+
+def test_generate_simple_variations(monkeypatch, rag_engine_module):
+    """Testa geração de variações simples com regras"""
+    _, _ = _setup_common_stubs(monkeypatch, rag_engine_module)
+
+    engine = rag_engine_module.RAGEngine()
+
+    # Testa variação com sinônimo
+    variations = engine._generate_simple_variations("Como solicitar férias")
+    assert len(variations) > 0
+    # Deve conter alguma variação com sinônimo
+    assert any("pedir" in v or "recesso" in v for v in variations)
+
+
+def test_query_returns_suggestions_when_no_documents(monkeypatch, rag_engine_module):
+    """Testa que quando não encontra documentos, retorna sugestões ao usuário"""
+    _, vectorstore = _setup_common_stubs(monkeypatch, rag_engine_module)
+
+    # Simula nenhum resultado mesmo com variações
+    vectorstore.similarity_search_with_score = lambda **kwargs: []
+
+    class DummyChat:
+        def invoke(self, prompt):
+            if "variações" in prompt.lower() or "gere" in prompt.lower():
+                return SimpleNamespace(content="termo alternativo\noutra busca")
+            return SimpleNamespace(content="sugestão 1\nsugestão 2\nsugestão 3")
+
+    monkeypatch.setattr(rag_engine_module, "ChatOllama", DummyChat)
+
+    engine = rag_engine_module.RAGEngine()
+    engine.llm = DummyChat()
+    engine.use_hybrid = False
+    engine.sparse_encoder = None
+
+    result = engine.query("busca impossível")
+
+    # Verifica que retorna mensagem apropriada
+    assert "não encontrei documentos relevantes" in result["answer"].lower()
+    assert "você poderia tentar buscar por" in result["answer"].lower() or "fornecer mais detalhes" in result["answer"].lower()
+    assert result["metadata"]["retrieved_count"] == 0
+    assert "search_suggestions" in result["metadata"]
