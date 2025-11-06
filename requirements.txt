@@ -10,3 +10,19 @@ python-dotenv
 # LLM Providers (optional, install based on your choice)
 openai>=1.0.0
 anthropic>=0.21.0
+
+# Ollama Integration
+langchain>=0.1.0
+langchain-community>=0.0.13
+langchain-ollama>=0.1.0
+
+# Vector Store - Pinecone
+pinecone-client>=3.0.0
+langchain-pinecone>=0.1.0
+
+# Embeddings and Reranking
+sentence-transformers>=2.2.0
+
+# Additional utilities
+numpy
+tiktoken
