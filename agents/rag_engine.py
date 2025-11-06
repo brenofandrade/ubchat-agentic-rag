@@ -11,6 +11,13 @@ from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from openai import OpenAI
 
+try:
+    from pinecone_text.hybrid import hybrid_convex_scale
+    from pinecone_text.sparse import SpladeSparseEncoder
+except ImportError:  # pragma: no cover - fallback when library is missing
+    hybrid_convex_scale = None
+    SpladeSparseEncoder = None
+
 # Importa configurações
 from config import (
     OLLAMA_BASE_URL,
@@ -25,7 +32,10 @@ from config import (
     RERANK_TOP_K_DEFAULT,
     CROSS_ENCODER_MODEL,
     RERANK_BATCH_SIZE,
-    MAX_HISTORY
+    MAX_HISTORY,
+    ENABLE_HYBRID_SEARCH,
+    HYBRID_ALPHA,
+    SPLADE_MODEL
 )
 
 logger = logging.getLogger(__name__)
@@ -74,8 +84,32 @@ class RAGEngine:
         self.top_k = top_k
         self.rerank_method = rerank_method
         self.rerank_top_k = rerank_top_k if rerank_top_k > 0 else top_k
+        self.use_hybrid = ENABLE_HYBRID_SEARCH
+        self.hybrid_alpha = HYBRID_ALPHA
+        self.sparse_encoder = None
 
         logger.info(f"Inicializando RAG Engine com namespace '{namespace}'")
+
+        if self.use_hybrid:
+            if SpladeSparseEncoder is None or hybrid_convex_scale is None:
+                logger.warning(
+                    "Biblioteca 'pinecone-text' não disponível; desativando busca híbrida."
+                )
+                self.use_hybrid = False
+            else:
+                try:
+                    logger.info(
+                        "Carregando codificador esparso para busca híbrida: %s",
+                        SPLADE_MODEL
+                    )
+                    self.sparse_encoder = SpladeSparseEncoder(model_name=SPLADE_MODEL)
+                    logger.info(
+                        "Busca híbrida ativada (alpha=%.2f)",
+                        self.hybrid_alpha
+                    )
+                except Exception as exc:
+                    logger.error(f"Erro ao carregar encoder esparso: {exc}")
+                    self.use_hybrid = False
 
         # Inicializa cliente OpenAI (opcional, para variações de consulta)
         self.openai_client = None
@@ -92,6 +126,7 @@ class RAGEngine:
         logger.info(f"Conectando ao Pinecone index '{PINECONE_INDEX_NAME}'")
         self.pc = Pinecone(api_key=PINECONE_API_KEY)
         self.index = self.pc.Index(PINECONE_INDEX_NAME)
+        self._verify_pinecone_connection()
 
         # Inicializa LLM Ollama para geração
         logger.info(f"Inicializando Ollama LLM: {GENERATION_MODEL}")
@@ -144,24 +179,15 @@ class RAGEngine:
         logger.info(f"Recuperando {k} documentos para query: '{query[:100]}...'")
 
         try:
-            # Busca similar via Pinecone
-            results = self.vectorstore.similarity_search_with_score(
-                query=query,
-                k=k,
-                namespace=self.namespace
-            )
-
-            # Converte para RetrievedDocument
-            documents = [
-                RetrievedDocument(
-                    content=doc.page_content,
-                    metadata=doc.metadata,
-                    score=score
-                )
-                for doc, score in results
-            ]
-
-            logger.info(f"✓ Recuperados {len(documents)} documentos")
+            if self.use_hybrid and self.sparse_encoder:
+                documents = self._hybrid_retrieve(query, k)
+                if not documents:
+                    logger.warning(
+                        "Busca híbrida não retornou resultados; usando busca densa como fallback."
+                    )
+                    documents = self._dense_retrieve(query, k)
+            else:
+                documents = self._dense_retrieve(query, k)
 
             # Aplica reranking se configurado
             if self.rerank_method != "none" and len(documents) > 0:
@@ -172,6 +198,121 @@ class RAGEngine:
         except Exception as e:
             logger.error(f"Erro ao recuperar documentos: {e}")
             return []
+
+    def _dense_retrieve(self, query: str, k: int) -> List[RetrievedDocument]:
+        """Executa recuperação baseada apenas em embeddings densos."""
+        results = self.vectorstore.similarity_search_with_score(
+            query=query,
+            k=k,
+            namespace=self.namespace
+        )
+
+        documents = [
+            RetrievedDocument(
+                content=doc.page_content,
+                metadata=doc.metadata,
+                score=score
+            )
+            for doc, score in results
+        ]
+
+        logger.info(f"✓ Recuperados {len(documents)} documentos (busca densa)")
+        return documents
+
+    def _hybrid_retrieve(self, query: str, k: int) -> List[RetrievedDocument]:
+        """Executa recuperação híbrida combinando sinais densos e esparsos."""
+        try:
+            dense_vector = self.embeddings.embed_query(query)
+        except Exception as exc:
+            logger.error(f"Erro ao gerar embedding para busca híbrida: {exc}")
+            return []
+
+        try:
+            sparse_vector = self.sparse_encoder.encode_queries([query])[0]
+        except Exception as exc:
+            logger.error(f"Erro ao gerar vetor esparso para busca híbrida: {exc}")
+            return []
+
+        if hybrid_convex_scale:
+            try:
+                dense_vector, sparse_vector = hybrid_convex_scale(
+                    dense_vector,
+                    sparse_vector,
+                    self.hybrid_alpha
+                )
+            except Exception as exc:
+                logger.error(f"Erro ao aplicar escala híbrida: {exc}")
+                return []
+
+        try:
+            response = self.index.query(
+                vector=dense_vector,
+                sparse_vector=sparse_vector,
+                namespace=self.namespace,
+                top_k=k,
+                include_metadata=True
+            )
+        except Exception as exc:
+            logger.error(f"Erro ao consultar Pinecone (busca híbrida): {exc}")
+            return []
+
+        matches = getattr(response, "matches", []) or []
+        documents: List[RetrievedDocument] = []
+
+        for match in matches:
+            metadata = getattr(match, "metadata", None)
+            if metadata is None and isinstance(match, dict):
+                metadata = match.get("metadata", {})
+            metadata = metadata or {}
+
+            content = (
+                metadata.get("text")
+                or metadata.get("page_content")
+                or metadata.get("content")
+                or metadata.get("chunk")
+                or metadata.get("body")
+                or ""
+            )
+
+            if not content and isinstance(match, dict):
+                content = match.get("text", "")
+
+            score = getattr(match, "score", None)
+            if score is None and isinstance(match, dict):
+                score = match.get("score", 0.0)
+
+            try:
+                score_value = float(score) if score is not None else 0.0
+            except (TypeError, ValueError):
+                score_value = 0.0
+
+            documents.append(
+                RetrievedDocument(
+                    content=content,
+                    metadata=metadata,
+                    score=score_value
+                )
+            )
+
+        logger.info(f"✓ Recuperados {len(documents)} documentos (busca híbrida)")
+        return documents
+
+    def _verify_pinecone_connection(self) -> None:
+        """Verifica se a conexão com o Pinecone está operacional."""
+        try:
+            stats = self.index.describe_index_stats(namespace=self.namespace)
+            dimension = None
+            if isinstance(stats, dict):
+                dimension = stats.get("dimension")
+            else:
+                dimension = getattr(stats, "dimension", None)
+            logger.info(
+                "✓ Conexão com Pinecone verificada (dimensão: %s)",
+                dimension if dimension is not None else "desconhecida"
+            )
+        except Exception as exc:
+            logger.error(f"Falha ao verificar conexão com Pinecone: {exc}")
+            raise RuntimeError("Não foi possível verificar a conexão com o Pinecone.") from exc
 
     def _rerank(self, query: str, documents: List[RetrievedDocument]) -> List[RetrievedDocument]:
         """

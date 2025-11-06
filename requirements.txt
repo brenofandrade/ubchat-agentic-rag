@@ -23,6 +23,7 @@ langchain-core==1.0.3
 # Vector Store - Pinecone
 pinecone-client>=3.0.0
 langchain-pinecone>=0.1.0
+pinecone-text>=0.9.0
 
 # Embeddings and Reranking
 sentence-transformers>=2.2.0
@@ -31,3 +32,4 @@ sentence-transformers>=2.2.0
 numpy
 tiktoken
 ollama>=0.3
+pytest
