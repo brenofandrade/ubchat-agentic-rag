@@ -1,5 +1,6 @@
 import requests
 from requests.exceptions import HTTPError, ConnectionError, Timeout, RequestException
+from typing import Optional, Dict, Any
 
 
 def main() -> None:
@@ -35,5 +36,43 @@ def main() -> None:
             print(response.text)
 
 
+def send_question(question: str, context: Optional[str] = None, base_url: str = "http://localhost:8000") -> Dict[str, Any]:
+    """Send a question to the API (main.py) and return the JSON response.
+
+    If context is provided, calls the full router endpoint '/route-query'.
+    Otherwise, calls the simplified endpoint '/route-query/simple'.
+    """
+    endpoint = "/route-query" if context else "/route-query/simple"
+    url = f"{base_url.rstrip('/')}{endpoint}"
+
+    payload: Dict[str, Any] = {"question": question}
+    if context:
+        payload["context"] = context
+
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+    except ConnectionError:
+        return {"error": f"Connection error calling {url}. Is the server running?"}
+    except Timeout:
+        return {"error": f"Request to {url} timed out."}
+    except HTTPError as e:
+        status = getattr(e.response, "status_code", "unknown")
+        try:
+            detail = e.response.json()
+        except Exception:
+            detail = e.response.text if getattr(e, "response", None) else ""
+        return {"error": f"HTTP error {status} from {url}", "detail": detail}
+    except RequestException as e:
+        return {"error": f"Unexpected error calling {url}: {e}"}
+
+
 if __name__ == "__main__":
-    main()
+    # main()
+
+    question = input("Faça sua pergunta:\n")
+
+    resposta = send_question(question).get("answer", "__Texto sem resposta__")
+
+    print(resposta)
