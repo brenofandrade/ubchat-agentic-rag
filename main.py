@@ -168,9 +168,6 @@ def route_query_simple():
 
 
 
-
-
-
 @app.route("/rag/query", methods=["POST"])
 def rag_query():
     """

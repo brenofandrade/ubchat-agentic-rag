@@ -240,6 +240,8 @@ class QueryRouter:
         ✓ Palavras-chave: "empresa", "nossa política", "como solicito", "procedimento", "interno"
 
         Exemplos RAG:
+        - "Qual é o Documento onde encontro informações de devolução?"
+        - "Qual o manual explica sobre reembolso?"
         - "Qual é a política de férias da empresa?"
         - "Posso vender integral ou parcialmente minhas férias?"
         - "Como solicito reembolso de despesas?"
